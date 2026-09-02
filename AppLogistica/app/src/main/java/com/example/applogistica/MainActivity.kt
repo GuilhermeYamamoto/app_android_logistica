@@ -1,24 +1,35 @@
 package com.example.applogistica
 
+import android.Manifest
+import android.app.Activity
+import android.content.ClipData
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.graphics.Bitmap
+import android.net.Uri
+import android.net.http.SslError
 import android.os.Bundle
+import android.provider.MediaStore
+import android.util.Log
+import android.webkit.PermissionRequest
+import android.webkit.SslErrorHandler
+import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
 import android.webkit.WebView
 import android.webkit.WebViewClient
-import androidx.appcompat.app.AppCompatActivity
-
-import android.Manifest
-import android.content.pm.PackageManager
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
-import android.webkit.PermissionRequest
-import android.webkit.SslErrorHandler
-import android.net.http.SslError
-import android.util.Log
+import androidx.core.content.FileProvider
+import androidx.appcompat.app.AppCompatActivity
+import java.io.File
 
 class MainActivity : AppCompatActivity() {
 
     private lateinit var webView: WebView
-    private val TAG = "MainActivity"
+    private var filePathCallback: ValueCallback<Array<Uri>>? = null
+    private var cameraImageUri: Uri? = null
+    private var pendingPermissionRequest: PermissionRequest? = null
+    private var pendingWebPermissions = emptyArray<String>()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -70,7 +81,7 @@ class MainActivity : AppCompatActivity() {
                 super.onPageFinished(view, url)
             }
 
-            override fun onPageStarted(view: WebView?, url: String?, favicon: android.graphics.Bitmap?) {
+            override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
                 Log.i(TAG, "Page started loading: $url")
                 super.onPageStarted(view, url, favicon)
             }
@@ -82,23 +93,56 @@ class MainActivity : AppCompatActivity() {
                 return true
             }
 
-            override fun onPermissionRequest(request: PermissionRequest?) {
-                if (request != null) {
-                    // Solicitar permissão de câmera/áudio
-                    if (ContextCompat.checkSelfPermission(
-                            this@MainActivity,
-                            Manifest.permission.CAMERA
-                        ) != PackageManager.PERMISSION_GRANTED
-                    ) {
-                        ActivityCompat.requestPermissions(
-                            this@MainActivity,
-                            arrayOf(Manifest.permission.CAMERA),
-                            100
-                        )
-                    } else {
-                        // Já tem permissão, conceder
-                        request.grant(request.resources)
+            override fun onShowFileChooser(
+                view: WebView,
+                filePathCallback: ValueCallback<Array<Uri>>,
+                fileChooserParams: FileChooserParams
+            ): Boolean {
+                this@MainActivity.filePathCallback?.onReceiveValue(null)
+                this@MainActivity.filePathCallback = filePathCallback
+                return showImageChooser(fileChooserParams)
+            }
+
+            override fun onPermissionRequest(request: PermissionRequest) {
+                val requestedResources = request.resources
+                val permissions = buildList {
+                    if (PermissionRequest.RESOURCE_VIDEO_CAPTURE in requestedResources) {
+                        add(Manifest.permission.CAMERA)
                     }
+                    if (PermissionRequest.RESOURCE_AUDIO_CAPTURE in requestedResources) {
+                        add(Manifest.permission.RECORD_AUDIO)
+                    }
+                }
+
+                if (permissions.isEmpty()) {
+                    request.deny()
+                    return
+                }
+
+                val missingPermissions = permissions.filter {
+                    ContextCompat.checkSelfPermission(this@MainActivity, it) !=
+                        PackageManager.PERMISSION_GRANTED
+                }
+                pendingPermissionRequest = request
+                pendingWebPermissions = requestedResources.filter {
+                    it == PermissionRequest.RESOURCE_VIDEO_CAPTURE ||
+                        it == PermissionRequest.RESOURCE_AUDIO_CAPTURE
+                }.toTypedArray()
+
+                if (missingPermissions.isEmpty()) {
+                    grantPendingWebPermission()
+                } else {
+                    ActivityCompat.requestPermissions(
+                        this@MainActivity,
+                        missingPermissions.toTypedArray(),
+                        WEB_PERMISSION_REQUEST_CODE
+                    )
+                }
+            }
+
+            override fun onPermissionRequestCanceled(request: PermissionRequest) {
+                if (pendingPermissionRequest == request) {
+                    clearPendingWebPermission()
                 }
             }
         }
@@ -113,12 +157,45 @@ class MainActivity : AppCompatActivity() {
     ) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
 
-        if (requestCode == 100) {
-            if (grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
-                // Permissão concedida, recarregar página
-                webView.reload()
+        if (requestCode == WEB_PERMISSION_REQUEST_CODE) {
+            if (grantResults.isNotEmpty() && grantResults.all { it == PackageManager.PERMISSION_GRANTED }) {
+                grantPendingWebPermission()
+            } else {
+                pendingPermissionRequest?.deny()
+                clearPendingWebPermission()
             }
         }
+    }
+
+    @Deprecated("Deprecated in Java")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+
+        if (requestCode != FILE_CHOOSER_REQUEST_CODE) {
+            return
+        }
+
+        val result = if (resultCode == Activity.RESULT_OK) {
+            when {
+                data?.clipData != null -> Array(data.clipData!!.itemCount) {
+                    data.clipData!!.getItemAt(it).uri
+                }
+                data?.data != null -> arrayOf(data.data!!)
+                cameraImageUri != null -> arrayOf(cameraImageUri!!)
+                else -> null
+            }
+        } else {
+            null
+        }
+        filePathCallback?.onReceiveValue(result)
+        filePathCallback = null
+        cameraImageUri?.let {
+            revokeUriPermission(
+                it,
+                Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+            )
+        }
+        cameraImageUri = null
     }
 
     override fun onBackPressed() {
@@ -127,5 +204,51 @@ class MainActivity : AppCompatActivity() {
         } else {
             super.onBackPressed()
         }
+    }
+
+    private fun showImageChooser(fileChooserParams: WebChromeClient.FileChooserParams): Boolean {
+        val galleryIntent = Intent(Intent.ACTION_GET_CONTENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE)
+            type = "image/*"
+            putExtra(Intent.EXTRA_ALLOW_MULTIPLE, fileChooserParams.mode == WebChromeClient.FileChooserParams.MODE_OPEN_MULTIPLE)
+        }
+
+        val cameraIntent = Intent(MediaStore.ACTION_IMAGE_CAPTURE).takeIf {
+            it.resolveActivity(packageManager) != null
+        }?.apply {
+            val imageFile = File.createTempFile("camera_", ".jpg", cacheDir)
+            cameraImageUri = FileProvider.getUriForFile(
+                this@MainActivity,
+                "$packageName.fileprovider",
+                imageFile
+            )
+            putExtra(MediaStore.EXTRA_OUTPUT, cameraImageUri)
+            clipData = ClipData.newRawUri("captured_image", cameraImageUri)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
+        }
+
+        startActivityForResult(
+            Intent.createChooser(galleryIntent, getString(R.string.select_image)).apply {
+                cameraIntent?.let { putExtra(Intent.EXTRA_INITIAL_INTENTS, arrayOf(it)) }
+            },
+            FILE_CHOOSER_REQUEST_CODE
+        )
+        return true
+    }
+
+    private fun grantPendingWebPermission() {
+        pendingPermissionRequest?.grant(pendingWebPermissions)
+        clearPendingWebPermission()
+    }
+
+    private fun clearPendingWebPermission() {
+        pendingPermissionRequest = null
+        pendingWebPermissions = emptyArray()
+    }
+
+    private companion object {
+        const val TAG = "MainActivity"
+        const val WEB_PERMISSION_REQUEST_CODE = 100
+        const val FILE_CHOOSER_REQUEST_CODE = 101
     }
 }
