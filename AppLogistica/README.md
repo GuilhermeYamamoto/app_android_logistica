@@ -99,7 +99,40 @@ modernas do Android.
 
 - Não remova `onShowFileChooser`, o `FileProvider` ou `res/xml/file_paths.xml`;
   os três componentes são necessários para anexar fotos pelo `WebView`.
+- O `WebView` não usa o cache HTTP e limpa o cache ao iniciar. Ao retornar ao
+  aplicativo, a página é recarregada para buscar a versão mais recente do
+  sistema web. Esse recarregamento é suspenso enquanto o seletor de imagens ou
+  uma solicitação de permissão estiverem abertos.
 - Ao mudar o `applicationId`, atualize a autoridade do `FileProvider` para
   continuar usando `${applicationId}.fileprovider`.
 - A foto capturada fica no cache do aplicativo e é destinada ao envio imediato
   pelo sistema web. Ela não é salva automaticamente na galeria do dispositivo.
+
+## Atualização da interface no tablet
+
+O aplicativo apresenta o sistema web em um `WebView`. Para evitar que o tablet
+continue mostrando uma versão antiga da interface, o aplicativo está
+configurado para:
+
+1. Ignorar o cache HTTP ao carregar páginas.
+2. Limpar o cache do `WebView` ao iniciar.
+3. Recarregar a página ao retornar ao aplicativo, por exemplo após deixá-lo em
+   segundo plano.
+
+O recarregamento automático não ocorre enquanto o seletor de imagens ou uma
+solicitação de permissão estiverem abertos, evitando a perda de anexos e de
+ações em andamento.
+
+### Publicar a atualização no tablet
+
+Depois de alterar o código, é preciso gerar e instalar uma nova versão do APK:
+
+1. Abra a pasta `AppLogistica` no Android Studio.
+2. Gere o APK em **Build > Build APK(s)**. Para distribuição, use
+   **Build > Generate Signed Bundle / APK** e assine o APK de release.
+3. Copie o arquivo APK gerado para o tablet.
+4. Instale-o no tablet, substituindo a versão anterior. Se necessário, habilite
+   a instalação de aplicativos dessa origem nas configurações do Android.
+
+Para atualizar uma instalação existente sem removê-la, mantenha o mesmo
+`applicationId` e assine o APK com a mesma chave usada na versão já instalada.

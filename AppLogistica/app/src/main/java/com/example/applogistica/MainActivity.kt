@@ -17,6 +17,7 @@ import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import android.webkit.WebSettings
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
@@ -30,6 +31,9 @@ class MainActivity : AppCompatActivity() {
     private var cameraImageUri: Uri? = null
     private var pendingPermissionRequest: PermissionRequest? = null
     private var pendingWebPermissions = emptyArray<String>()
+    private var initialPageLoaded = false
+    private var fileChooserOpen = false
+    private var refreshOnResume = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -43,7 +47,7 @@ class MainActivity : AppCompatActivity() {
         webSettings.javaScriptEnabled = true
         webSettings.domStorageEnabled = true
         webSettings.databaseEnabled = true
-        webSettings.cacheMode = android.webkit.WebSettings.LOAD_DEFAULT
+        webSettings.cacheMode = WebSettings.LOAD_NO_CACHE
         webSettings.mixedContentMode = android.webkit.WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
         webSettings.userAgentString = "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36"
         webSettings.setSupportZoom(true)
@@ -78,6 +82,7 @@ class MainActivity : AppCompatActivity() {
 
             override fun onPageFinished(view: WebView?, url: String?) {
                 Log.i(TAG, "Page finished loading: $url")
+                initialPageLoaded = true
                 super.onPageFinished(view, url)
             }
 
@@ -147,7 +152,24 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        webView.loadUrl("https://serp-app.indufix.com.br/login")
+        webView.clearCache(true)
+        webView.loadUrl(LOGISTICS_URL)
+    }
+
+    override fun onResume() {
+        super.onResume()
+
+        if (initialPageLoaded && refreshOnResume && !fileChooserOpen &&
+            pendingPermissionRequest == null
+        ) {
+            webView.reload()
+        }
+        refreshOnResume = false
+    }
+
+    override fun onPause() {
+        refreshOnResume = true
+        super.onPause()
     }
 
     override fun onRequestPermissionsResult(
@@ -175,6 +197,8 @@ class MainActivity : AppCompatActivity() {
             return
         }
 
+        fileChooserOpen = false
+        refreshOnResume = false
         val result = if (resultCode == Activity.RESULT_OK) {
             when {
                 data?.clipData != null -> Array(data.clipData!!.itemCount) {
@@ -207,6 +231,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun showImageChooser(fileChooserParams: WebChromeClient.FileChooserParams): Boolean {
+        fileChooserOpen = true
         val galleryIntent = Intent(Intent.ACTION_GET_CONTENT).apply {
             addCategory(Intent.CATEGORY_OPENABLE)
             type = "image/*"
@@ -248,6 +273,7 @@ class MainActivity : AppCompatActivity() {
 
     private companion object {
         const val TAG = "MainActivity"
+        const val LOGISTICS_URL = "https://serp-app.indufix.com.br/login"
         const val WEB_PERMISSION_REQUEST_CODE = 100
         const val FILE_CHOOSER_REQUEST_CODE = 101
     }
