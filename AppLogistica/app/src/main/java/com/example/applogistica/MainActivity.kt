@@ -168,7 +168,6 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onPause() {
-        refreshOnResume = true
         super.onPause()
     }
 
