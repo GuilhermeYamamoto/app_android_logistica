@@ -272,7 +272,7 @@ class MainActivity : AppCompatActivity() {
 
     private companion object {
         const val TAG = "MainActivity"
-        const val LOGISTICS_URL = "https://serp-app.indufix.com.br/login"
+        const val LOGISTICS_URL = "https://serp-app.vonerom.com/login"
         const val WEB_PERMISSION_REQUEST_CODE = 100
         const val FILE_CHOOSER_REQUEST_CODE = 101
     }
